@@ -61,6 +61,14 @@
             Sign in with Google
           </button>
 
+          <button
+            @click="goToFileTransfer"
+            class="w-full mt-4 bg-green-600 text-white py-2 px-4 rounded-md hover:bg-green-700 transition duration-200"
+          >
+            🚀 Go to File Transfer
+          </button>
+
+
           <p class="text-sm text-gray-500 mt-4">
             By signing in, you agree to allow this app to access your Google Drive files for
             compression purposes only.
@@ -193,8 +201,7 @@
     </div>
 
     <!-- Processing Screen -->
-    <div
-      v-if="currentScreen === 'processing'"
+    <div v-if="currentScreen === 'processing'"
       class="min-h-screen bg-gray-100 flex items-center justify-center p-4"
     >
       <div class="max-w-2xl w-full bg-white rounded-lg shadow-lg p-8">
@@ -241,8 +248,7 @@
     </div>
 
     <!-- Results Screen -->
-    <div
-      v-if="currentScreen === 'results'"
+    <div v-if="currentScreen === 'results'"
       class="min-h-screen bg-gray-100 flex items-center justify-center p-4"
     >
       <div class="max-w-4xl w-full bg-white rounded-lg shadow-lg p-8">
@@ -297,10 +303,30 @@
         </div>
       </div>
     </div>
+    <!-- File Transfer Screen -->
+<div v-if="currentScreen === 'fileTransfer'" class="min-h-screen bg-gray-100 flex items-center justify-center p-4">
+  <div class="max-w-3xl w-full bg-white rounded-lg shadow-lg p-8">
+    <h2 class="text-2xl font-bold text-gray-900 mb-6 text-center">File Transfer</h2>
+
+    <p class="text-gray-600 text-center mb-6">
+      Here you can upload, move, or share files between folders. (Coming soon 🚧)
+    </p>
+    <FileTransfer />
+
+    <div class="flex justify-center">
+      <button
+        @click="currentScreen = 'dashboard'"
+        class="px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition duration-200"
+      >
+        ⬅ Back to Dashboard
+      </button>
+    </div>
+  </div>
+</div>
+
 
     <!-- Error Modal -->
-    <div
-      v-if="showErrorModal"
+    <div v-if="showErrorModal"
       class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
     >
       <div class="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
@@ -333,11 +359,13 @@
 
 <script>
 import FileExplorer from './FileExplorer.vue'
+import FileTransfer from './FileTransfer.vue'
 
 export default {
   name: 'DriveCompressor',
   components: {
     FileExplorer,
+    FileTransfer
   },
   data() {
     return {
@@ -439,6 +467,10 @@ export default {
   },
 
   methods: {
+    goToFileTransfer() {
+      this.currentScreen = 'fileTransfer'
+    },
+
     async initializeGoogleIdentityServices() {
       try {
         await this.waitForGoogleIdentityServices()

@@ -1,0 +1,15 @@
+PS D:\Code only\7th sem projects\driveImageCompressor> tree ./src /f /a 
+Folder PATH listing for volume New Volume
+Volume serial number is AE3D-FEB0
+D:\CODE ONLY\7TH SEM PROJECTS\DRIVEIMAGECOMPRESSOR\SRC
+|   App.vue
+|   main.js
+|
++---assets
+|       main.css
+|       tailwind.css
+|
+\---components
+        DriveCompressor.vue (calls -> FileExplorer, FileTransfer)
+        FileExplorer.vue
+        FileTransfer.vue
