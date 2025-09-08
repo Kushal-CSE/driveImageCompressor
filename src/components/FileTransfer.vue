@@ -36,6 +36,7 @@
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
             </svg>
             <span class="text-green-800 font-medium">Source Drive Connected</span>
+            <span v-if="sourceUserInfo" class="ml-2 text-sm text-green-700">({{ sourceUserInfo.email }})</span>
           </div>
         </div>
       </div>
@@ -50,6 +51,7 @@
           <h3 class="text-xl font-medium text-gray-800 mb-2">Connect Destination Drive</h3>
           <p class="text-gray-600 mb-6">
             Now connect to the Google Drive account where you want to transfer the files.
+            <strong>Note:</strong> You may need to sign out and sign in with a different account.
           </p>
         </div>
         
@@ -77,6 +79,7 @@
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
             </svg>
             <span class="text-green-800 font-medium">Destination Drive Connected</span>
+            <span v-if="destinationUserInfo" class="ml-2 text-sm text-green-700">({{ destinationUserInfo.email }})</span>
           </div>
         </div>
 
@@ -112,7 +115,7 @@
               <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
               </svg>
-              Source Drive (Select files to transfer)
+              Source Drive ({{ sourceUserInfo?.email || 'Loading...' }})
             </h3>
           </div>
           <div class="p-4">
@@ -138,7 +141,7 @@
               <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2H5a2 2 0 00-2-2z"></path>
               </svg>
-              Destination Drive (Select target folder)
+              Destination Drive ({{ destinationUserInfo?.email || 'Loading...' }})
             </h3>
           </div>
           <div class="p-4">
@@ -207,6 +210,26 @@
         </div>
       </div>
     </div>
+
+    <!-- Error Modal -->
+    <div v-if="showErrorModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div class="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+        <div class="flex justify-between items-center mb-4">
+          <h3 class="text-lg font-semibold text-gray-900">Error</h3>
+          <button @click="hideError" class="text-gray-400 hover:text-gray-600">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+            </svg>
+          </button>
+        </div>
+        <p class="text-gray-600 mb-6">{{ errorMessage }}</p>
+        <div class="flex justify-end">
+          <button @click="hideError" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition duration-200">
+            OK
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -218,6 +241,14 @@ export default {
   components: { FileExplorer },
   data() {
     return {
+      // Configuration
+      config: {
+        clientId: import.meta.env.VITE_GOOGLE_CLIENT_ID,
+        apiKey: import.meta.env.VITE_GOOGLE_API_KEY,
+        discoveryDocs: [import.meta.env.VITE_DISCOVERY_DOCS],
+        scopes: import.meta.env.VITE_SCOPES,
+      },
+
       // Navigation
       currentPage: 1,
       
@@ -227,22 +258,31 @@ export default {
       loading: false,
       transferring: false,
       statusMessage: '',
+      showErrorModal: false,
+      errorMessage: '',
+
+      // Authentication tokens and user info
+      sourceAccessToken: null,
+      destinationAccessToken: null,
+      sourceUserInfo: null,
+      destinationUserInfo: null,
+      sourceTokenClient: null,
+      destinationTokenClient: null,
 
       // Source Drive Data
       sourceFolders: [],
       sourcePath: [],
-      sourceCurrentFolders: [],
       sourceSelectedFolderId: null,
       sourceFolderHierarchy: new Map(),
 
       // Destination Drive Data
       destinationFolders: [],
       destinationPath: [],
-      destinationCurrentFolders: [],
       destinationSelectedFolderId: null,
       destinationFolderHierarchy: new Map(),
     }
   },
+
   computed: {
     sourceCurrentFolders() {
       return this.sourceFolderHierarchy.get(this.getCurrentSourceFolderId()) || []
@@ -251,38 +291,191 @@ export default {
       return this.destinationFolderHierarchy.get(this.getCurrentDestinationFolderId()) || []
     }
   },
+
+  async mounted() {
+    if (this.config.clientId !== 'YOUR_CLIENT_ID_HERE' && this.config.apiKey !== 'YOUR_API_KEY_HERE') {
+      await this.initializeGoogleServices()
+    }
+  },
+
   methods: {
-    // Navigation Methods
+    // Google API Initialization
+    async initializeGoogleServices() {
+      try {
+        await this.waitForGoogleServices()
+        await this.initializeGoogleAPIClient()
+        this.setupGoogleSignIn()
+        console.log('Google services initialized for file transfer')
+      } catch (error) {
+        console.error('Failed to initialize Google services:', error)
+        this.showError('Initialization Failed', error.message)
+      }
+    },
+
+    waitForGoogleServices() {
+      return new Promise((resolve, reject) => {
+        let attempts = 0
+        const maxAttempts = 50
+
+        const checkGoogle = () => {
+          attempts++
+          if (window.google && window.google.accounts && window.gapi) {
+            resolve()
+          } else if (attempts >= maxAttempts) {
+            reject(new Error('Google services failed to load'))
+          } else {
+            setTimeout(checkGoogle, 100)
+          }
+        }
+        checkGoogle()
+      })
+    },
+
+    async initializeGoogleAPIClient() {
+      return new Promise((resolve, reject) => {
+        gapi.load('client', async () => {
+          try {
+            await gapi.client.init({
+              apiKey: this.config.apiKey,
+              discoveryDocs: this.config.discoveryDocs,
+            })
+            resolve()
+          } catch (error) {
+            reject(error)
+          }
+        })
+      })
+    },
+
+    setupGoogleSignIn() {
+      // Setup source token client
+      this.sourceTokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: this.config.clientId,
+        scope: this.config.scopes,
+        callback: (tokenResponse) => {
+          if (tokenResponse.error !== undefined) {
+            console.error('Source token error:', tokenResponse.error)
+            this.showError('Source Authentication Failed', tokenResponse.error)
+            return
+          }
+          this.sourceAccessToken = tokenResponse.access_token
+          this.handleSourceAuth(tokenResponse)
+        },
+      })
+
+      // Setup destination token client
+      this.destinationTokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: this.config.clientId,
+        scope: this.config.scopes,
+        callback: (tokenResponse) => {
+          if (tokenResponse.error !== undefined) {
+            console.error('Destination token error:', tokenResponse.error)
+            this.showError('Destination Authentication Failed', tokenResponse.error)
+            return
+          }
+          this.destinationAccessToken = tokenResponse.access_token
+          this.handleDestinationAuth(tokenResponse)
+        },
+      })
+    },
+
+    // Authentication Methods
     async connectSourceDrive() {
+      if (this.config.clientId === 'YOUR_CLIENT_ID_HERE') {
+        this.showError('Configuration Required', 'Please configure your Google API credentials.')
+        return
+      }
+      
       this.loading = true
       try {
-        // Simulate API call to connect source drive
-        await this.simulateConnection()
-        await this.fetchSourceFolders()
-        this.sourceConnected = true
-        this.currentPage = 2
+        // Sign out any existing session first
+        if (gapi.client.getToken()) {
+          gapi.client.setToken(null)
+        }
+        
+        this.sourceTokenClient.requestAccessToken({ prompt: 'select_account' })
       } catch (error) {
-        this.statusMessage = 'Error: Failed to connect to source drive'
-      } finally {
         this.loading = false
+        this.showError('Authentication Error', error.message)
       }
     },
 
     async connectDestinationDrive() {
       this.loading = true
       try {
-        // Simulate API call to connect destination drive
-        await this.simulateConnection()
-        await this.fetchDestinationFolders()
-        this.destinationConnected = true
-        this.currentPage = 3
+        // Sign out current session to allow different account selection
+        if (gapi.client.getToken()) {
+          gapi.client.setToken(null)
+        }
+        
+        this.destinationTokenClient.requestAccessToken({ prompt: 'select_account' })
       } catch (error) {
-        this.statusMessage = 'Error: Failed to connect to destination drive'
+        this.loading = false
+        this.showError('Authentication Error', error.message)
+      }
+    },
+
+    async handleSourceAuth(tokenResponse) {
+      try {
+        // Set token for API calls
+        gapi.client.setToken({ access_token: this.sourceAccessToken })
+        
+        // Get user info
+        this.sourceUserInfo = await this.getUserInfo(this.sourceAccessToken)
+        
+        // Load folders
+        await this.fetchSourceFolders()
+        
+        this.sourceConnected = true
+        this.currentPage = 2
+        
+        console.log('Source drive connected:', this.sourceUserInfo.email)
+      } catch (error) {
+        console.error('Source auth error:', error)
+        this.showError('Source Authentication Failed', error.message)
       } finally {
         this.loading = false
       }
     },
 
+    async handleDestinationAuth(tokenResponse) {
+      try {
+        // Set token for API calls
+        gapi.client.setToken({ access_token: this.destinationAccessToken })
+        
+        // Get user info
+        this.destinationUserInfo = await this.getUserInfo(this.destinationAccessToken)
+        
+        // Load folders
+        await this.fetchDestinationFolders()
+        
+        this.destinationConnected = true
+        this.currentPage = 3
+        
+        console.log('Destination drive connected:', this.destinationUserInfo.email)
+      } catch (error) {
+        console.error('Destination auth error:', error)
+        this.showError('Destination Authentication Failed', error.message)
+      } finally {
+        this.loading = false
+      }
+    },
+
+    async getUserInfo(accessToken) {
+      const response = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`
+        }
+      })
+      
+      if (!response.ok) {
+        throw new Error('Failed to get user info')
+      }
+      
+      return await response.json()
+    },
+
+    // Navigation Methods
     goToPreviousPage() {
       if (this.currentPage > 1) {
         this.currentPage--
@@ -290,11 +483,6 @@ export default {
     },
 
     // Utility Methods
-    async simulateConnection() {
-      // Simulate network delay
-      return new Promise(resolve => setTimeout(resolve, 1500))
-    },
-
     getCurrentSourceFolderId() {
       return this.sourcePath.length > 0 ? this.sourcePath[this.sourcePath.length - 1].id : null
     },
@@ -316,18 +504,23 @@ export default {
     // Source Drive Methods
     async fetchSourceFolders() {
       try {
-        // Mock data for source drive
-        this.sourceFolders = [
-          { id: 'src1', name: 'Documents', parents: null },
-          { id: 'src2', name: 'Photos', parents: null },
-          { id: 'src3', name: 'Work Files', parents: null },
-          { id: 'src4', name: 'Vacation 2023', parents: ['src2'] },
-          { id: 'src5', name: 'Family Photos', parents: ['src2'] },
-          { id: 'src6', name: 'Projects', parents: ['src3'] },
-        ]
+        // Set source token for API calls
+        gapi.client.setToken({ access_token: this.sourceAccessToken })
+        
+        const response = await gapi.client.drive.files.list({
+          q: "mimeType='application/vnd.google-apps.folder' and trashed=false and 'me' in owners",
+          pageSize: 1000,
+          fields: 'files(id, name, parents)',
+          includeItemsFromAllDrives: false,
+          supportsAllDrives: false,
+        })
+
+        this.sourceFolders = [...(response.result.files || [])]
         this.organizeFolderHierarchy('source')
+        console.log('Source folders loaded:', this.sourceFolders.length)
       } catch (error) {
-        this.statusMessage = 'Error: Failed to fetch source folders'
+        console.error('Error loading source folders:', error)
+        this.showError('Failed to Load Source Folders', error.message)
       }
     },
 
@@ -365,17 +558,23 @@ export default {
     // Destination Drive Methods
     async fetchDestinationFolders() {
       try {
-        // Mock data for destination drive
-        this.destinationFolders = [
-          { id: 'dest1', name: 'Backup', parents: null },
-          { id: 'dest2', name: 'Archive', parents: null },
-          { id: 'dest3', name: 'Shared', parents: null },
-          { id: 'dest4', name: '2024 Backup', parents: ['dest1'] },
-          { id: 'dest5', name: 'Old Files', parents: ['dest2'] },
-        ]
+        // Set destination token for API calls
+        gapi.client.setToken({ access_token: this.destinationAccessToken })
+        
+        const response = await gapi.client.drive.files.list({
+          q: "mimeType='application/vnd.google-apps.folder' and trashed=false and 'me' in owners",
+          pageSize: 1000,
+          fields: 'files(id, name, parents)',
+          includeItemsFromAllDrives: false,
+          supportsAllDrives: false,
+        })
+
+        this.destinationFolders = [...(response.result.files || [])]
         this.organizeFolderHierarchy('destination')
+        console.log('Destination folders loaded:', this.destinationFolders.length)
       } catch (error) {
-        this.statusMessage = 'Error: Failed to fetch destination folders'
+        console.error('Error loading destination folders:', error)
+        this.showError('Failed to Load Destination Folders', error.message)
       }
     },
 
@@ -417,13 +616,26 @@ export default {
       
       hierarchy.clear()
 
+      // Create a Set of all owned folder IDs for quick lookup
+      const ownedFolderIds = new Set(folders.map(f => f.id))
+
       folders.forEach(folder => {
-        const parentId = folder.parents && folder.parents.length > 0 ? folder.parents[0] : null
-        
+        let parentId = null
+
+        // Check if folder has parents and if the parent is also owned by us
+        if (folder.parents && Array.isArray(folder.parents) && folder.parents.length > 0) {
+          const potentialParentId = folder.parents[0]
+
+          // Only use the parent if it's also in our owned folders list
+          if (ownedFolderIds.has(potentialParentId)) {
+            parentId = potentialParentId
+          }
+        }
+
         if (!hierarchy.has(parentId)) {
           hierarchy.set(parentId, [])
         }
-        
+
         hierarchy.get(parentId).push(folder)
       })
 
@@ -449,18 +661,104 @@ export default {
       this.statusMessage = 'Starting transfer...'
 
       try {
-        // Simulate transfer process
-        await new Promise(resolve => setTimeout(resolve, 3000))
+        // Get files from source folder
+        gapi.client.setToken({ access_token: this.sourceAccessToken })
+        
+        const sourceFilesResponse = await gapi.client.drive.files.list({
+          q: `'${this.sourceSelectedFolderId}' in parents and trashed=false`,
+          fields: 'files(id, name, mimeType, size)',
+        })
+
+        const filesToTransfer = sourceFilesResponse.result.files || []
+        
+        if (filesToTransfer.length === 0) {
+          this.statusMessage = 'No files found in the selected source folder'
+          this.transferring = false
+          return
+        }
+
+        this.statusMessage = `Found ${filesToTransfer.length} files to transfer...`
+
+        // Transfer each file
+        let transferred = 0
+        for (const file of filesToTransfer) {
+          try {
+            await this.transferFile(file)
+            transferred++
+            this.statusMessage = `Transferred ${transferred}/${filesToTransfer.length} files...`
+          } catch (error) {
+            console.error(`Failed to transfer ${file.name}:`, error)
+          }
+        }
         
         const sourceFolder = this.getSelectedSourceFolderName()
         const destFolder = this.getSelectedDestinationFolderName()
         
-        this.statusMessage = `Transfer completed successfully! Files from "${sourceFolder}" have been transferred to "${destFolder}".`
+        this.statusMessage = `Transfer completed! ${transferred}/${filesToTransfer.length} files transferred from "${sourceFolder}" to "${destFolder}".`
       } catch (error) {
+        console.error('Transfer error:', error)
         this.statusMessage = 'Error: Transfer failed. Please try again.'
       } finally {
         this.transferring = false
       }
+    },
+
+    async transferFile(file) {
+      // Download file from source
+      gapi.client.setToken({ access_token: this.sourceAccessToken })
+      
+      const downloadResponse = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`,
+        {
+          headers: {
+            'Authorization': `Bearer ${this.sourceAccessToken}`
+          }
+        }
+      )
+
+      if (!downloadResponse.ok) {
+        throw new Error(`Failed to download ${file.name}`)
+      }
+
+      const fileBlob = await downloadResponse.blob()
+
+      // Upload to destination
+      const metadata = {
+        name: file.name,
+        parents: [this.destinationSelectedFolderId]
+      }
+
+      const form = new FormData()
+      form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }))
+      form.append('file', fileBlob)
+
+      const uploadResponse = await fetch(
+        'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.destinationAccessToken}`
+          },
+          body: form
+        }
+      )
+
+      if (!uploadResponse.ok) {
+        throw new Error(`Failed to upload ${file.name}`)
+      }
+
+      return await uploadResponse.json()
+    },
+
+    // Error Handling
+    showError(title, message) {
+      this.errorMessage = `${title}: ${message}`
+      this.showErrorModal = true
+    },
+
+    hideError() {
+      this.showErrorModal = false
+      this.errorMessage = ''
     }
   }
 }
