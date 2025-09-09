@@ -98,12 +98,20 @@
     <div v-if="currentPage === 3">
       <div class="flex items-center justify-between mb-6">
         <h2 class="text-2xl font-semibold text-gray-900">File Transfer</h2>
-        <button
-          @click="goToPreviousPage"
-          class="text-blue-600 hover:text-blue-800 text-sm font-medium"
-        >
-          ← Back to Destination Setup
-        </button>
+        <div class="flex space-x-3">
+          <button
+            @click="goToPreviousPage"
+            class="text-blue-600 hover:text-blue-800 text-sm font-medium"
+          >
+            ← Back to Destination Setup
+          </button>
+          <button
+            @click="logout"
+            class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition duration-200"
+          >
+            Logout
+          </button>
+        </div>
       </div>
 
       <!-- Two File Explorers Side by Side -->
@@ -117,18 +125,23 @@
               </svg>
               Source Drive ({{ sourceUserInfo?.email || 'Loading...' }})
             </h3>
+            <div v-if="selectedSourceItems.length > 0" class="mt-2 text-sm text-blue-700">
+              {{ selectedSourceItems.length }} item(s) selected
+            </div>
           </div>
           <div class="p-4">
-            <FileExplorer
+            <SourceFileExplorer
               :folders="sourceFolders"
+              :files="sourceFiles"
               :currentPath="sourcePath"
               :currentFolders="sourceCurrentFolders"
-              :selectedFolderId="sourceSelectedFolderId"
+              :currentFiles="sourceCurrentFiles"
+              :selectedItems="selectedSourceItems"
+              :loading="sourceLoading"
               @refresh="fetchSourceFolders"
               @navigate-to-level="navigateSourceToLevel"
-              @select-folder-highlight="highlightSourceFolder"
               @navigate-into-folder="navigateSourceIntoFolder"
-              @select-folder="selectSourceFolder"
+              @toggle-item-selection="toggleSourceItemSelection"
               @go-back="goBackSource"
             />
           </div>
@@ -143,13 +156,16 @@
               </svg>
               Destination Drive ({{ destinationUserInfo?.email || 'Loading...' }})
             </h3>
+            <div v-if="selectedDestinationFolder" class="mt-2 text-sm text-green-700">
+              Selected: {{ selectedDestinationFolder.name }}
+            </div>
           </div>
           <div class="p-4">
             <FileExplorer
               :folders="destinationFolders"
               :currentPath="destinationPath"
               :currentFolders="destinationCurrentFolders"
-              :selectedFolderId="destinationSelectedFolderId"
+              :selectedFolderId="selectedDestinationFolder?.id"
               @refresh="fetchDestinationFolders"
               @navigate-to-level="navigateDestinationToLevel"
               @select-folder-highlight="highlightDestinationFolder"
@@ -167,13 +183,13 @@
           <h3 class="text-lg font-semibold text-gray-900 mb-4">Ready to Transfer</h3>
 
           <!-- Transfer Status -->
-          <div v-if="sourceSelectedFolderId && destinationSelectedFolderId" class="mb-4 p-4 bg-white rounded-lg border">
+          <div v-if="selectedSourceItems.length > 0 && selectedDestinationFolder" class="mb-4 p-4 bg-white rounded-lg border">
             <div class="flex items-center justify-center space-x-4 text-sm">
               <div class="flex items-center text-blue-600">
                 <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
                 </svg>
-                Source: {{ getSelectedSourceFolderName() }}
+                {{ selectedSourceItems.length }} item(s) selected
               </div>
               <svg class="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8l4 4m0 0l-4 4m4-4H3"></path>
@@ -182,15 +198,34 @@
                 <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2H5a2 2 0 00-2-2z"></path>
                 </svg>
-                Destination: {{ getSelectedDestinationFolderName() }}
+                {{ selectedDestinationFolder.name }}
               </div>
+            </div>
+          </div>
+
+          <!-- Transfer Progress -->
+          <div v-if="transferring" class="mb-4 p-4 bg-white rounded-lg border">
+            <div class="mb-2">
+              <div class="flex justify-between text-sm text-gray-600">
+                <span>{{ transferProgress.current }} of {{ transferProgress.total }}</span>
+                <span>{{ Math.round((transferProgress.current / transferProgress.total) * 100) }}%</span>
+              </div>
+            </div>
+            <div class="w-full bg-gray-200 rounded-full h-2">
+              <div
+                class="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                :style="{ width: (transferProgress.current / transferProgress.total) * 100 + '%' }"
+              ></div>
+            </div>
+            <div v-if="transferProgress.currentItem" class="mt-2 text-sm text-gray-600">
+              Transferring: {{ transferProgress.currentItem }}
             </div>
           </div>
 
           <!-- Transfer Button -->
           <button
             @click="transfer"
-            :disabled="!sourceSelectedFolderId || !destinationSelectedFolderId || transferring"
+            :disabled="selectedSourceItems.length === 0 || !selectedDestinationFolder || transferring"
             class="px-8 py-3 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg transition duration-200 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center mx-auto"
           >
             <svg v-if="transferring" class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -204,53 +239,13 @@
           </button>
 
           <!-- Status Message -->
-          <div v-if="statusMessage" class="mt-4 p-3 rounded-lg" :class="statusMessage.includes('Error') ? 'bg-red-50 text-red-800 border border-red-200' : 'bg-blue-50 text-blue-800 border border-blue-200'">
-            {{ statusMessage }}
-          </div>
-        </div>
-      </div>
-          <!-- Transfer Button -->
-          <button
-            @click="transfer"
-            :disabled="!sourceSelectedFolderId || !destinationSelectedFolderId || transferring"
-            class="px-8 py-3 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg transition duration-200 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center mx-auto"
-          >
-            <svg v-if="transferring" class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            <svg v-else class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3-3m0 0l-3 3m3-3v12"></path>
-            </svg>
-            {{ transferring ? 'Transferring Files...' : 'Start Transfer' }}
-          </button>
-
-          <!-- Status Message -->
-          <div v-if="statusMessage" class="mt-4 p-3 rounded-lg" :class="statusMessage.includes('Error') ? 'bg-red-50 text-red-800 border border-red-200' : 'bg-blue-50 text-blue-800 border border-blue-200'">
+          <div v-if="statusMessage" class="mt-4 p-3 rounded-lg" :class="statusMessage.includes('Error') || statusMessage.includes('Failed') ? 'bg-red-50 text-red-800 border border-red-200' : statusMessage.includes('Success') || statusMessage.includes('completed') ? 'bg-green-50 text-green-800 border border-green-200' : 'bg-blue-50 text-blue-800 border border-blue-200'">
             {{ statusMessage }}
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Error Modal -->
-    <div v-if="showErrorModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div class="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
-        <div class="flex justify-between items-center mb-4">
-          <h3 class="text-lg font-semibold text-gray-900">Error</h3>
-          <button @click="hideError" class="text-gray-400 hover:text-gray-600">
-            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-            </svg>
-          </button>
-        </div>
-        <p class="text-gray-600 mb-6">{{ errorMessage }}</p>
-        <div class="flex justify-end">
-          <button @click="hideError" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition duration-200">
-            OK
-          </button>
-        </div>
-      </div>
     <!-- Error Modal -->
     <div v-if="showErrorModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div class="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
@@ -275,10 +270,11 @@
 
 <script>
 import FileExplorer from './FileExplorer.vue'
+import SourceFileExplorer from './SourceFileExplorer.vue'
 
 export default {
   name: 'FileTransfer',
-  components: { FileExplorer },
+  components: { FileExplorer, SourceFileExplorer },
   data() {
     return {
       // Configuration
@@ -297,6 +293,7 @@ export default {
       destinationConnected: false,
       loading: false,
       transferring: false,
+      sourceLoading: false,
       statusMessage: '',
       showErrorModal: false,
       errorMessage: '',
@@ -311,23 +308,33 @@ export default {
 
       // Source Drive Data
       sourceFolders: [],
+      sourceFiles: [],
       sourcePath: [],
-      sourceSelectedFolderId: null,
+      selectedSourceItems: [], // Array of selected files/folders
       sourceFolderHierarchy: new Map(),
-      sourceSelectedFolderId: null,
-      sourceFolderHierarchy: new Map(),
+      sourceFilesByFolder: new Map(),
 
       // Destination Drive Data
       destinationFolders: [],
       destinationPath: [],
-      destinationSelectedFolderId: null,
+      selectedDestinationFolder: null, // Single folder object
       destinationFolderHierarchy: new Map(),
+
+      // Transfer Progress
+      transferProgress: {
+        current: 0,
+        total: 0,
+        currentItem: ''
+      }
     }
   },
 
   computed: {
     sourceCurrentFolders() {
       return this.sourceFolderHierarchy.get(this.getCurrentSourceFolderId()) || []
+    },
+    sourceCurrentFiles() {
+      return this.sourceFilesByFolder.get(this.getCurrentSourceFolderId()) || []
     },
     destinationCurrentFolders() {
       return this.destinationFolderHierarchy.get(this.getCurrentDestinationFolderId()) || []
@@ -354,374 +361,527 @@ export default {
     });
   },
 
-
   methods: {
-  // =========================
-  // AUTHENTICATION
-  // =========================
-  async connectSourceDrive() {
-    if (this.config.clientId === "YOUR_CLIENT_ID_HERE") {
-      this.showError(
-        "Configuration Required",
-        "Please configure your Google API credentials."
-      );
-      return;
-    }
-
-    this.loading = true;
-    try {
-      this.sourceTokenClient.requestAccessToken({ prompt: "select_account" });
-    } catch (error) {
-      this.loading = false;
-      this.showError("Authentication Error", error.message);
-    }
-  },
-
-  async connectDestinationDrive() {
-    this.loading = true;
-    try {
-      this.destinationTokenClient.requestAccessToken({ prompt: "select_account" });
-    } catch (error) {
-      this.loading = false;
-      this.showError("Authentication Error", error.message);
-    }
-  },
-
-  async handleSourceAuth(tokenResponse) {
-    try {
-      this.sourceAccessToken = tokenResponse.access_token;
-      this.sourceUserInfo = await this.getUserInfo(this.sourceAccessToken);
-      await this.fetchSourceFolders();
-      this.sourceConnected = true;
-      this.currentPage = 2;
-      console.log("Source drive connected:", this.sourceUserInfo.email);
-    } catch (error) {
-      console.error("Source auth error:", error);
-      this.showError("Source Authentication Failed", error.message);
-    } finally {
-      this.loading = false;
-    }
-  },
-
-  async handleDestinationAuth(tokenResponse) {
-    try {
-      this.destinationAccessToken = tokenResponse.access_token;
-      this.destinationUserInfo = await this.getUserInfo(this.destinationAccessToken);
-      await this.fetchDestinationFolders();
-      this.destinationConnected = true;
-      this.currentPage = 3;
-      console.log("Destination drive connected:", this.destinationUserInfo.email);
-    } catch (error) {
-      console.error("Destination auth error:", error);
-      this.showError("Destination Authentication Failed", error.message);
-    } finally {
-      this.loading = false;
-    }
-  },
-
-  async getUserInfo(token) {
-    try {
-      const response = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status} - ${await response.text()}`);
-      }
-
-      return await response.json();
-    } catch (error) {
-      console.error("getUserInfo failed:", error);
-      throw new Error("Failed to get user info");
-    }
-  },
-
-  // =========================
-  // DRIVE FOLDER FETCH
-  // =========================
-  async fetchSourceFolders() {
-    try {
-      const response = await fetch(
-        "https://www.googleapis.com/drive/v3/files?q=mimeType='application/vnd.google-apps.folder' and trashed=false and 'me' in owners&fields=files(id,name,parents)",
-        {
-          headers: { Authorization: `Bearer ${this.sourceAccessToken}` },
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status} - ${await response.text()}`);
-      }
-
-      const data = await response.json();
-      this.sourceFolders = data.files || [];
-      this.organizeFolderHierarchy("source");
-      console.log("Source folders loaded:", this.sourceFolders.length);
-    } catch (error) {
-      console.error("Error loading source folders:", error);
-      this.showError("Failed to Load Source Folders", error.message);
-    }
-  },
-
-  async fetchDestinationFolders() {
-    try {
-      const response = await fetch(
-        "https://www.googleapis.com/drive/v3/files?q=mimeType='application/vnd.google-apps.folder' and trashed=false and 'me' in owners&fields=files(id,name,parents)",
-        {
-          headers: { Authorization: `Bearer ${this.destinationAccessToken}` },
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status} - ${await response.text()}`);
-      }
-
-      const data = await response.json();
-      this.destinationFolders = data.files || [];
-      this.organizeFolderHierarchy("destination");
-      console.log("Destination folders loaded:", this.destinationFolders.length);
-    } catch (error) {
-      console.error("Error loading destination folders:", error);
-      this.showError("Failed to Load Destination Folders", error.message);
-    }
-  },
-
-  // =========================
-  // FOLDER NAVIGATION HELPERS
-  // =========================
-  getCurrentSourceFolderId() {
-    return this.sourcePath.length > 0 ? this.sourcePath[this.sourcePath.length - 1].id : null;
-  },
-
-  getCurrentDestinationFolderId() {
-    return this.destinationPath.length > 0
-      ? this.destinationPath[this.destinationPath.length - 1].id
-      : null;
-  },
-
-  getSelectedSourceFolderName() {
-    const folder = this.sourceFolders.find((f) => f.id === this.sourceSelectedFolderId);
-    return folder ? folder.name : "None selected";
-  },
-
-  getSelectedDestinationFolderName() {
-    const folder = this.destinationFolders.find((f) => f.id === this.destinationSelectedFolderId);
-    return folder ? folder.name : "None selected";
-  },
-
-  navigateSourceToLevel(level) {
-    if (level === -1) {
-      this.sourcePath = [];
-    } else if (level < this.sourcePath.length) {
-      this.sourcePath = this.sourcePath.slice(0, level + 1);
-    }
-  },
-
-  navigateDestinationToLevel(level) {
-    if (level === -1) {
-      this.destinationPath = [];
-    } else if (level < this.destinationPath.length) {
-      this.destinationPath = this.destinationPath.slice(0, level + 1);
-    }
-  },
-
-  highlightSourceFolder(folder) {
-    this.sourceSelectedFolderId = folder.id;
-  },
-
-  highlightDestinationFolder(folder) {
-    this.destinationSelectedFolderId = folder.id;
-  },
-
-  navigateSourceIntoFolder(folder) {
-    if (this.hasSubfolders(folder.id, "source")) {
-      this.sourcePath.push({ id: folder.id, name: folder.name });
-    }
-  },
-
-  navigateDestinationIntoFolder(folder) {
-    if (this.hasSubfolders(folder.id, "destination")) {
-      this.destinationPath.push({ id: folder.id, name: folder.name });
-    }
-  },
-
-  selectSourceFolder(folderId) {
-    this.sourceSelectedFolderId = folderId;
-  },
-
-  selectDestinationFolder(folderId) {
-    this.destinationSelectedFolderId = folderId;
-  },
-
-  goBackSource() {
-    if (this.sourcePath.length > 0) {
-      this.sourcePath.pop();
-    }
-  },
-
-  goBackDestination() {
-    if (this.destinationPath.length > 0) {
-      this.destinationPath.pop();
-    }
-  },
-
-  // =========================
-  // FOLDER ORGANIZATION
-  // =========================
-  organizeFolderHierarchy(type) {
-    const folders = type === "source" ? this.sourceFolders : this.destinationFolders;
-    const hierarchy = type === "source"
-      ? this.sourceFolderHierarchy
-      : this.destinationFolderHierarchy;
-
-    hierarchy.clear();
-
-    const ownedFolderIds = new Set(folders.map((f) => f.id));
-
-    folders.forEach((folder) => {
-      let parentId = null;
-      if (folder.parents && Array.isArray(folder.parents) && folder.parents.length > 0) {
-        const potentialParentId = folder.parents[0];
-        if (ownedFolderIds.has(potentialParentId)) {
-          parentId = potentialParentId;
-        }
-      }
-
-      if (!hierarchy.has(parentId)) {
-        hierarchy.set(parentId, []);
-      }
-
-      hierarchy.get(parentId).push(folder);
-    });
-
-    hierarchy.forEach((folders) => {
-      folders.sort((a, b) => a.name.localeCompare(b.name));
-    });
-  },
-
-  hasSubfolders(folderId, type) {
-    const hierarchy = type === "source"
-      ? this.sourceFolderHierarchy
-      : this.destinationFolderHierarchy;
-    return hierarchy.has(folderId) && hierarchy.get(folderId).length > 0;
-  },
-
-  // =========================
-  // FILE TRANSFER
-  // =========================
-  async transfer() {
-    if (!this.sourceSelectedFolderId || !this.destinationSelectedFolderId) {
-      this.statusMessage = "Error: Please select both source and destination folders";
-      return;
-    }
-
-    this.transferring = true;
-    this.statusMessage = "Starting transfer...";
-
-    try {
-      const response = await fetch(
-        `https://www.googleapis.com/drive/v3/files?q='${this.sourceSelectedFolderId}' in parents and trashed=false&fields=files(id,name,mimeType,size)`,
-        { headers: { Authorization: `Bearer ${this.sourceAccessToken}` } }
-      );
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status} - ${await response.text()}`);
-      }
-
-      const data = await response.json();
-      const filesToTransfer = data.files || [];
-
-      if (filesToTransfer.length === 0) {
-        this.statusMessage = "No files found in the selected source folder";
-        this.transferring = false;
+    // =========================
+    // AUTHENTICATION
+    // =========================
+    async connectSourceDrive() {
+      if (this.config.clientId === "YOUR_CLIENT_ID_HERE") {
+        this.showError(
+          "Configuration Required",
+          "Please configure your Google API credentials."
+        );
         return;
       }
 
-      this.statusMessage = `Found ${filesToTransfer.length} files to transfer...`;
+      this.loading = true;
+      try {
+        this.sourceTokenClient.requestAccessToken({ prompt: "consent" });
+      } catch (error) {
+        this.loading = false;
+        this.showError("Authentication Error", error.message);
+      }
+    },
 
-      let transferred = 0;
-      for (const file of filesToTransfer) {
-        try {
+    async connectDestinationDrive() {
+      this.loading = true;
+      try {
+        this.destinationTokenClient.requestAccessToken({ prompt: "consent" });
+      } catch (error) {
+        this.loading = false;
+        this.showError("Authentication Error", error.message);
+      }
+    },
+
+    async handleSourceAuth(tokenResponse) {
+      try {
+        this.sourceAccessToken = tokenResponse.access_token;
+        this.sourceUserInfo = await this.getUserInfo(this.sourceAccessToken);
+        await this.fetchSourceFolders();
+        this.sourceConnected = true;
+        this.currentPage = 2;
+        console.log("Source drive connected:", this.sourceUserInfo.email);
+      } catch (error) {
+        console.error("Source auth error:", error);
+        this.showError("Source Authentication Failed", error.message);
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    async handleDestinationAuth(tokenResponse) {
+      try {
+        this.destinationAccessToken = tokenResponse.access_token;
+        this.destinationUserInfo = await this.getUserInfo(this.destinationAccessToken);
+        await this.fetchDestinationFolders();
+        this.destinationConnected = true;
+        this.currentPage = 3;
+        console.log("Destination drive connected:", this.destinationUserInfo.email);
+      } catch (error) {
+        console.error("Destination auth error:", error);
+        this.showError("Destination Authentication Failed", error.message);
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    async getUserInfo(token) {
+      try {
+        const response = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status} - ${await response.text()}`);
+        }
+
+        return await response.json();
+      } catch (error) {
+        console.error("getUserInfo failed:", error);
+        throw new Error("Failed to get user info");
+      }
+    },
+
+    // =========================
+    // LOGOUT AND STATE RESET
+    // =========================
+    logout() {
+      // Clear all authentication data
+      this.sourceAccessToken = null;
+      this.destinationAccessToken = null;
+      this.sourceUserInfo = null;
+      this.destinationUserInfo = null;
+      
+      // Clear connection status
+      this.sourceConnected = false;
+      this.destinationConnected = false;
+      
+      // Clear explorer state
+      this.sourceFolders = [];
+      this.sourceFiles = [];
+      this.sourcePath = [];
+      this.selectedSourceItems = [];
+      this.sourceFolderHierarchy.clear();
+      this.sourceFilesByFolder.clear();
+      
+      this.destinationFolders = [];
+      this.destinationPath = [];
+      this.selectedDestinationFolder = null;
+      this.destinationFolderHierarchy.clear();
+      
+      // Clear status
+      this.statusMessage = '';
+      this.transferring = false;
+      this.transferProgress = { current: 0, total: 0, currentItem: '' };
+      
+      // Reset to first page
+      this.currentPage = 1;
+      
+      console.log("Logged out and reset to initial state");
+    },
+
+    // =========================
+    // DRIVE FOLDER/FILE FETCH
+    // =========================
+    async fetchSourceFolders() {
+      try {
+        this.sourceLoading = true;
+        
+        // Fetch folders
+        const foldersResponse = await fetch(
+          "https://www.googleapis.com/drive/v3/files?q=mimeType='application/vnd.google-apps.folder' and trashed=false and 'me' in owners&fields=files(id,name,parents)&pageSize=1000",
+          {
+            headers: { Authorization: `Bearer ${this.sourceAccessToken}` },
+          }
+        );
+
+        if (!foldersResponse.ok) {
+          throw new Error(`HTTP ${foldersResponse.status} - ${await foldersResponse.text()}`);
+        }
+
+        const foldersData = await foldersResponse.json();
+        this.sourceFolders = foldersData.files || [];
+        
+        // Fetch files
+        const filesResponse = await fetch(
+          "https://www.googleapis.com/drive/v3/files?q=trashed=false and 'me' in owners and mimeType != 'application/vnd.google-apps.folder'&fields=files(id,name,parents,mimeType,size)&pageSize=1000",
+          {
+            headers: { Authorization: `Bearer ${this.sourceAccessToken}` },
+          }
+        );
+
+        if (!filesResponse.ok) {
+          throw new Error(`HTTP ${filesResponse.status} - ${await filesResponse.text()}`);
+        }
+
+        const filesData = await filesResponse.json();
+        this.sourceFiles = filesData.files || [];
+        
+        this.organizeFolderHierarchy("source");
+        this.organizeFilesByFolder();
+        console.log("Source folders loaded:", this.sourceFolders.length);
+        console.log("Source files loaded:", this.sourceFiles.length);
+      } catch (error) {
+        console.error("Error loading source folders:", error);
+        this.showError("Failed to Load Source Folders", error.message);
+      } finally {
+        this.sourceLoading = false;
+      }
+    },
+
+    async fetchDestinationFolders() {
+      try {
+        const response = await fetch(
+          "https://www.googleapis.com/drive/v3/files?q=mimeType='application/vnd.google-apps.folder' and trashed=false and 'me' in owners&fields=files(id,name,parents)&pageSize=1000",
+          {
+            headers: { Authorization: `Bearer ${this.destinationAccessToken}` },
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status} - ${await response.text()}`);
+        }
+
+        const data = await response.json();
+        this.destinationFolders = data.files || [];
+        this.organizeFolderHierarchy("destination");
+        console.log("Destination folders loaded:", this.destinationFolders.length);
+      } catch (error) {
+        console.error("Error loading destination folders:", error);
+        this.showError("Failed to Load Destination Folders", error.message);
+      }
+    },
+
+    // =========================
+    // FILE ORGANIZATION
+    // =========================
+    organizeFilesByFolder() {
+      this.sourceFilesByFolder.clear();
+      
+      this.sourceFiles.forEach(file => {
+        let parentId = null;
+        if (file.parents && Array.isArray(file.parents) && file.parents.length > 0) {
+          parentId = file.parents[0];
+        }
+        
+        if (!this.sourceFilesByFolder.has(parentId)) {
+          this.sourceFilesByFolder.set(parentId, []);
+        }
+        
+        this.sourceFilesByFolder.get(parentId).push(file);
+      });
+      
+      // Sort files alphabetically
+      this.sourceFilesByFolder.forEach(files => {
+        files.sort((a, b) => a.name.localeCompare(b.name));
+      });
+    },
+
+    // =========================
+    // FOLDER NAVIGATION HELPERS
+    // =========================
+    getCurrentSourceFolderId() {
+      return this.sourcePath.length > 0 ? this.sourcePath[this.sourcePath.length - 1].id : null;
+    },
+
+    getCurrentDestinationFolderId() {
+      return this.destinationPath.length > 0
+        ? this.destinationPath[this.destinationPath.length - 1].id
+        : null;
+    },
+
+    navigateSourceToLevel(level) {
+      if (level === -1) {
+        this.sourcePath = [];
+      } else if (level < this.sourcePath.length) {
+        this.sourcePath = this.sourcePath.slice(0, level + 1);
+      }
+      // Clear selections when navigating
+      this.selectedSourceItems = [];
+    },
+
+    navigateDestinationToLevel(level) {
+      if (level === -1) {
+        this.destinationPath = [];
+      } else if (level < this.destinationPath.length) {
+        this.destinationPath = this.destinationPath.slice(0, level + 1);
+      }
+    },
+
+    highlightDestinationFolder(folder) {
+      // For destination, we just highlight, don't select
+    },
+
+    navigateSourceIntoFolder(folder) {
+      if (this.hasSubfolders(folder.id, "source") || this.hasFiles(folder.id)) {
+        this.sourcePath.push({ id: folder.id, name: folder.name });
+        this.selectedSourceItems = []; // Clear selections when navigating
+      }
+    },
+
+    navigateDestinationIntoFolder(folder) {
+      if (this.hasSubfolders(folder.id, "destination")) {
+        this.destinationPath.push({ id: folder.id, name: folder.name });
+      }
+    },
+
+    selectDestinationFolder(folderId) {
+      const folder = this.destinationFolders.find(f => f.id === folderId);
+      this.selectedDestinationFolder = folder;
+    },
+
+    goBackSource() {
+      if (this.sourcePath.length > 0) {
+        this.sourcePath.pop();
+        this.selectedSourceItems = []; // Clear selections when navigating
+      }
+    },
+
+    goBackDestination() {
+      if (this.destinationPath.length > 0) {
+        this.destinationPath.pop();
+      }
+    },
+
+    // =========================
+    // SELECTION MANAGEMENT
+    // =========================
+    toggleSourceItemSelection(item) {
+      const index = this.selectedSourceItems.findIndex(selected => selected.id === item.id);
+      if (index > -1) {
+        // Item is selected, remove it
+        this.selectedSourceItems.splice(index, 1);
+      } else {
+        // Item is not selected, add it
+        this.selectedSourceItems.push(item);
+      }
+    },
+
+    // =========================
+    // FOLDER ORGANIZATION
+    // =========================
+    organizeFolderHierarchy(type) {
+      const folders = type === "source" ? this.sourceFolders : this.destinationFolders;
+      const hierarchy = type === "source"
+        ? this.sourceFolderHierarchy
+        : this.destinationFolderHierarchy;
+
+      hierarchy.clear();
+
+      const ownedFolderIds = new Set(folders.map((f) => f.id));
+
+      folders.forEach((folder) => {
+        let parentId = null;
+        if (folder.parents && Array.isArray(folder.parents) && folder.parents.length > 0) {
+          const potentialParentId = folder.parents[0];
+          if (ownedFolderIds.has(potentialParentId)) {
+            parentId = potentialParentId;
+          }
+        }
+
+        if (!hierarchy.has(parentId)) {
+          hierarchy.set(parentId, []);
+        }
+
+        hierarchy.get(parentId).push(folder);
+      });
+
+      hierarchy.forEach((folders) => {
+        folders.sort((a, b) => a.name.localeCompare(b.name));
+      });
+    },
+
+    hasSubfolders(folderId, type) {
+      const hierarchy = type === "source"
+        ? this.sourceFolderHierarchy
+        : this.destinationFolderHierarchy;
+      return hierarchy.has(folderId) && hierarchy.get(folderId).length > 0;
+    },
+
+    hasFiles(folderId) {
+      return this.sourceFilesByFolder.has(folderId) && this.sourceFilesByFolder.get(folderId).length > 0;
+    },
+
+    // =========================
+    // FILE TRANSFER
+    // =========================
+    async transfer() {
+      if (this.selectedSourceItems.length === 0 || !this.selectedDestinationFolder) {
+        this.statusMessage = "Error: Please select items to transfer and a destination folder";
+        return;
+      }
+
+      this.transferring = true;
+      this.transferProgress = {
+        current: 0,
+        total: this.selectedSourceItems.length,
+        currentItem: ''
+      };
+      this.statusMessage = "Starting transfer...";
+
+      try {
+        let transferred = 0;
+        let failed = 0;
+
+        for (const item of this.selectedSourceItems) {
+          if (!this.transferring) break; // Allow cancellation
+
+          this.transferProgress.currentItem = item.name;
+          
+          try {
+            if (item.mimeType === 'application/vnd.google-apps.folder') {
+              await this.transferFolder(item);
+            } else {
+              await this.transferFile(item);
+            }
+            transferred++;
+          } catch (error) {
+            console.error(`Failed to transfer ${item.name}:`, error);
+            failed++;
+          }
+
+          this.transferProgress.current++;
+        }
+
+        // Refresh both explorers after transfer
+        await Promise.all([
+          this.fetchSourceFolders(),
+          this.fetchDestinationFolders()
+        ]);
+
+        // Clear selections
+        this.selectedSourceItems = [];
+
+        if (failed === 0) {
+          this.statusMessage = `Success! Transferred ${transferred} item(s) to "${this.selectedDestinationFolder.name}".`;
+        } else {
+          this.statusMessage = `Transfer completed with issues. ${transferred} succeeded, ${failed} failed.`;
+        }
+      } catch (error) {
+        console.error("Transfer error:", error);
+        this.statusMessage = "Error: Transfer failed. Please try again.";
+      } finally {
+        this.transferring = false;
+        this.transferProgress = { current: 0, total: 0, currentItem: '' };
+      }
+    },
+
+    async transferFile(file) {
+      // Download from source
+      const downloadResponse = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`,
+        { headers: { Authorization: `Bearer ${this.sourceAccessToken}` } }
+      );
+
+      if (!downloadResponse.ok) {
+        throw new Error(`Failed to download ${file.name}`);
+      }
+
+      const fileBlob = await downloadResponse.blob();
+
+      // Upload to destination
+      const metadata = {
+        name: file.name,
+        parents: [this.selectedDestinationFolder.id],
+      };
+
+      const form = new FormData();
+      form.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }));
+      form.append("file", fileBlob);
+
+      const uploadResponse = await fetch(
+        "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${this.destinationAccessToken}` },
+          body: form,
+        }
+      );
+
+      if (!uploadResponse.ok) {
+        throw new Error(`Failed to upload ${file.name}`);
+      }
+
+      return await uploadResponse.json();
+    },
+
+    async transferFolder(folder) {
+      // Create folder in destination
+      const folderMetadata = {
+        name: folder.name,
+        mimeType: 'application/vnd.google-apps.folder',
+        parents: [this.selectedDestinationFolder.id],
+      };
+
+      const createResponse = await fetch(
+        "https://www.googleapis.com/drive/v3/files",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${this.destinationAccessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(folderMetadata),
+        }
+      );
+
+      if (!createResponse.ok) {
+        throw new Error(`Failed to create folder ${folder.name}`);
+      }
+
+      const newFolder = await createResponse.json();
+
+      // Get all files in the source folder
+      const filesResponse = await fetch(
+        `https://www.googleapis.com/drive/v3/files?q='${folder.id}' in parents and trashed=false&fields=files(id,name,mimeType,size)`,
+        { headers: { Authorization: `Bearer ${this.sourceAccessToken}` } }
+      );
+
+      if (!filesResponse.ok) {
+        throw new Error(`Failed to list files in folder ${folder.name}`);
+      }
+
+      const filesData = await filesResponse.json();
+      const files = filesData.files || [];
+
+      // Transfer each file in the folder
+      for (const file of files) {
+        if (file.mimeType === 'application/vnd.google-apps.folder') {
+          // Recursively transfer subfolders (simplified - would need more complex handling)
+          continue;
+        } else {
+          // Transfer file to the new folder
+          const tempDestination = this.selectedDestinationFolder;
+          this.selectedDestinationFolder = newFolder;
           await this.transferFile(file);
-          transferred++;
-          this.statusMessage = `Transferred ${transferred}/${filesToTransfer.length} files...`;
-        } catch (error) {
-          console.error(`Failed to transfer ${file.name}:`, error);
+          this.selectedDestinationFolder = tempDestination;
         }
       }
 
-      const sourceFolder = this.getSelectedSourceFolderName();
-      const destFolder = this.getSelectedDestinationFolderName();
+      return newFolder;
+    },
 
-      this.statusMessage = `Transfer completed! ${transferred}/${filesToTransfer.length} files transferred from "${sourceFolder}" to "${destFolder}".`;
-    } catch (error) {
-      console.error("Transfer error:", error);
-      this.statusMessage = "Error: Transfer failed. Please try again.";
-    } finally {
-      this.transferring = false;
-    }
-  },
+    // =========================
+    // ERROR HANDLING
+    // =========================
+    showError(title, message) {
+      this.errorMessage = `${title}: ${message}`;
+      this.showErrorModal = true;
+    },
 
-  async transferFile(file) {
-    // Download from source
-    const downloadResponse = await fetch(
-      `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`,
-      { headers: { Authorization: `Bearer ${this.sourceAccessToken}` } }
-    );
+    hideError() {
+      this.showErrorModal = false;
+      this.errorMessage = "";
+    },
 
-    if (!downloadResponse.ok) {
-      throw new Error(`Failed to download ${file.name}`);
-    }
-
-    const fileBlob = await downloadResponse.blob();
-
-    // Upload to destination
-    const metadata = {
-      name: file.name,
-      parents: [this.destinationSelectedFolderId],
-    };
-
-    const form = new FormData();
-    form.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }));
-    form.append("file", fileBlob);
-
-    const uploadResponse = await fetch(
-      "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
-      {
-        method: "POST",
-        headers: { Authorization: `Bearer ${this.destinationAccessToken}` },
-        body: form,
+    // =========================
+    // NAVIGATION
+    // =========================
+    goToPreviousPage() {
+      if (this.currentPage > 1) {
+        this.currentPage--;
       }
-    );
-
-    if (!uploadResponse.ok) {
-      throw new Error(`Failed to upload ${file.name}`);
-    }
-
-    return await uploadResponse.json();
-  },
-
-  // =========================
-  // ERROR HANDLING
-  // =========================
-  showError(title, message) {
-    this.errorMessage = `${title}: ${message}`;
-    this.showErrorModal = true;
-  },
-
-  hideError() {
-    this.showErrorModal = false;
-    this.errorMessage = "";
-  },
-
-  // =========================
-  // NAVIGATION
-  // =========================
-  goToPreviousPage() {
-    if (this.currentPage > 1) {
-      this.currentPage--;
-    }
-  },
-}
-
+    },
+  }
 }
 </script>
